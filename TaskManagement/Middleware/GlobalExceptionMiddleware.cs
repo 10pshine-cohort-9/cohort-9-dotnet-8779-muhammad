@@ -1,0 +1,67 @@
+using System.Text.Json;
+using Serilog;
+
+namespace TaskManagement.API.Middleware;
+
+public class GlobalExceptionMiddleware
+{
+    private readonly RequestDelegate _next;
+    private readonly ILogger<GlobalExceptionMiddleware> _logger;
+
+    public GlobalExceptionMiddleware(
+        RequestDelegate next,
+        ILogger<GlobalExceptionMiddleware> logger)
+    {
+        _next = next;
+        _logger = logger;
+    }
+
+    public async Task InvokeAsync(HttpContext context)
+    {
+        try
+        {
+            await _next(context);
+        }
+        catch (UnauthorizedAccessException ex)
+        {
+            _logger.LogWarning(ex, "Unauthorized access attempt.");
+
+            context.Response.StatusCode = StatusCodes.Status403Forbidden;
+
+            await context.Response.WriteAsJsonAsync(new
+            {
+                message = ex.Message
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "An unhandled exception occurred.");
+
+            if(context.Response.HasStarted)
+            {
+                _logger.LogWarning("The response has already started, the global exception middleware will not be executed.");
+                throw;
+            }
+
+            await HandleExceptionAsync(context, ex);
+        }
+    }
+
+    private static Task HandleExceptionAsync(HttpContext context, Exception exception)
+    {
+        Log.Error(exception, "An unhandled exception occurred.");
+
+        context.Response.ContentType = "application/json";
+        context.Response.StatusCode = StatusCodes.Status500InternalServerError;
+
+        var response = new
+        {
+            StatusCode = context.Response.StatusCode,
+            Message = "An unexpected error occurred. Please try again later."
+        };
+
+        var jsonResponse = JsonSerializer.Serialize(response);
+
+        return context.Response.WriteAsync(jsonResponse);
+    }
+}
